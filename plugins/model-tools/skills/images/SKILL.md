@@ -18,5 +18,6 @@ description: Generate or edit raster images (illustrations, photos, icons, banne
    (`image_parameters`). Pass only options the user needs; unset options keep the model's own
    defaults.
 
-If the tool says no image model is chosen, run `/model-tools:setup`. A 403 means the key is not
+Without a default the tool uses the first image model the key can use and says so in `note`;
+mention once that `/model-tools:setup` picks a different default. A 403 means the key is not
 allowed to generate images — ask whoever issued the key to allow it.

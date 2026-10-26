@@ -1,17 +1,21 @@
 #!/usr/bin/env node
 // model-tools MCP server: classification (/v1/decisions) and images (/v1/images/*) through the
 // OpenAI-compatible API configured for Claude Code. Zero dependencies; stdio JSON-RPC, one message per line.
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
 import { basename, extname, isAbsolute, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 
-const VERSION = '0.1.0';
+const VERSION = '0.1.1';
 const MAX_CONTENT_CHARS = 20000;
 const CLASSIFY_CONCURRENCY = 4;
 const DECISIONS_TIMEOUT_MS = 60_000;
 const IMAGES_TIMEOUT_MS = 300_000;
 const MAX_REFERENCE_BYTES = 15 * 1024 * 1024;
+// Jev reads images whose sides are 256–1568 px; a larger image is scaled down before sending.
+const MAX_IMAGE_SIDE = 1568;
 const IMAGE_MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' };
 
 // A plugin userConfig field that was never set can arrive as an empty string or an unexpanded
@@ -74,6 +78,18 @@ async function permitted(path) {
   return r.status === 403 ? false : r.status === 400 ? true : null;
 }
 
+// The default the user picked in setup, else a sensible one from what the key may use, so the
+// first call works before setup: the newest Jev for classification, the first listed image model.
+async function pickModel(kind) {
+  const config = await loadConfig();
+  if (config[kind]) return { model: config[kind] };
+  const ids = (await listIds(kind === 'classifier' ? 'decisions' : 'image')).map((m) => m.id);
+  const jev = ids.filter((id) => /jev/i.test(id)).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+  const model = (kind === 'classifier' ? jev[0] : undefined) || ids[0];
+  if (!model) throw new ToolError(`This key can use no ${kind === 'classifier' ? 'classifier' : 'image model'}.`);
+  return { model, note: `No default ${kind === 'classifier' ? 'classifier' : 'image model'} chosen yet, so ${model} was used; run /model-tools:setup to pick one.` };
+}
+
 async function listModels() {
   const { source, base } = resolveAuth();
   const [classifiers, imageModels, canDecide, canDraw, config] = await Promise.all([
@@ -107,11 +123,50 @@ async function configure({ classifier, image_model }) {
 const projectDir = () => configured(process.env.CLAUDE_PROJECT_DIR) || process.cwd();
 const absolute = (p) => (isAbsolute(p) ? p : resolve(projectDir(), p));
 
+const run = (cmd, args) => new Promise((ok, fail) => execFile(cmd, args, (e) => (e ? fail(e) : ok())));
+
+// PNG/JPEG size from the header, no decoder needed.
+export function imageSize(buf) {
+  if (buf.length >= 24 && buf[0] === 0x89 && buf[1] === 0x50) return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
+  if (buf[0] !== 0xff || buf[1] !== 0xd8) return null;
+  for (let i = 2; i + 9 < buf.length;) {
+    if (buf[i] !== 0xff) { i++; continue; }
+    const marker = buf[i + 1];
+    if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) return { w: buf.readUInt16BE(i + 7), h: buf.readUInt16BE(i + 5) };
+    i += 2 + buf.readUInt16BE(i + 2);
+  }
+  return null;
+}
+
+async function shrink(path, ext) {
+  const dir = await mkdtemp(join(tmpdir(), 'model-tools-'));
+  const out = join(dir, `scaled${ext}`);
+  try {
+    try { await run('sips', ['-Z', String(MAX_IMAGE_SIDE), path, '--out', out]); }
+    catch { await run('magick', [path, '-resize', `${MAX_IMAGE_SIDE}x${MAX_IMAGE_SIDE}>`, out]); }
+    return await readFile(out);
+  } catch {
+    throw new ToolError(`${path} is larger than ${MAX_IMAGE_SIDE} px per side and neither sips nor ImageMagick is available to scale it; resize it first.`);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+// An image item goes into the state as an image part, which decision models such as Jev read.
+async function imageItem(name, path, ext) {
+  let buf = await readFile(path);
+  const size = imageSize(buf);
+  if (size && Math.max(size.w, size.h) > MAX_IMAGE_SIDE) buf = await shrink(path, ext);
+  return { name, image: { type: 'image_url', image_url: { url: `data:${IMAGE_MIME[ext]};base64,${buf.toString('base64')}` } } };
+}
+
 async function readItem(item) {
   if (item.text !== undefined) return { name: item.name || 'text', content: String(item.text) };
   const path = absolute(item.path);
+  const ext = extname(path).toLowerCase();
+  if (['.png', '.jpg', '.jpeg'].includes(ext)) return imageItem(item.path, path, ext);
   const buf = await readFile(path);
-  if (buf.subarray(0, 8000).includes(0)) throw new ToolError(`${item.path} is binary; describe it in text and pass it as {text}`);
+  if (buf.subarray(0, 8000).includes(0)) throw new ToolError(`${item.path} is binary; pass a PNG/JPEG image or describe it in text as {text}`);
   const text = buf.toString('utf8');
   return { name: item.path, content: text.length > MAX_CONTENT_CHARS ? text.slice(0, MAX_CONTENT_CHARS) + '\n…[truncated]' : text };
 }
@@ -128,18 +183,20 @@ async function mapLimit(items, limit, fn) {
 async function classify({ items, questions, context, model }) {
   if (!Array.isArray(items) || items.length === 0) throw new ToolError('items must be a non-empty array of {path} or {text}');
   if (!questions || typeof questions !== 'object' || Object.keys(questions).length === 0) throw new ToolError('questions must be a non-empty object');
-  const chosen = model || (await loadConfig()).classifier;
-  if (!chosen) throw new ToolError('No classifier chosen: pass model, or run /model-tools:setup to pick a default.');
+  const { model: chosen, note } = model ? { model } : await pickModel('classifier');
   const results = await mapLimit(items, CLASSIFY_CONCURRENCY, async (item) => {
     try {
-      const { name, content } = await readItem(item);
-      const r = await call('POST', '/decisions', { model: chosen, state: { item: name, content, ...(context ? { context } : {}) }, questions }, DECISIONS_TIMEOUT_MS);
+      const { name, content, image } = await readItem(item);
+      const state = image
+        ? [...(context ? [context] : []), `item: ${name}`, image]
+        : { item: name, content, ...(context ? { context } : {}) };
+      const r = await call('POST', '/decisions', { model: chosen, state, questions }, DECISIONS_TIMEOUT_MS);
       return r.status === 200 ? { item: name, answers: r.json.answers } : { item: name, error: errorText(r) };
     } catch (e) {
       return { item: item.path || item.name || 'text', error: e.message };
     }
   });
-  return { model: chosen, results };
+  return { model: chosen, ...(note ? { note } : {}), results };
 }
 
 async function dataUrl(path) {
@@ -163,8 +220,7 @@ const IMAGE_OPTIONS = ['size', 'aspect_ratio', 'resolution', 'quality', 'output_
 
 async function draw(route, args, extra) {
   if (!args.prompt) throw new ToolError('prompt is required');
-  const model = args.model || (await loadConfig()).image_model;
-  if (!model) throw new ToolError('No image model chosen: pass model, or run /model-tools:setup to pick a default.');
+  const { model, note } = args.model ? { model: args.model } : await pickModel('image_model');
   const body = { model, prompt: args.prompt, ...extra };
   for (const k of IMAGE_OPTIONS) if (args[k] !== undefined) body[k] = args[k];
   const r = await call('POST', route, body, IMAGES_TIMEOUT_MS);
@@ -182,7 +238,7 @@ async function draw(route, args, extra) {
     saved.push({ path: join(outDir, name), bytes: buf.length, ...(item.revised_prompt ? { revised_prompt: item.revised_prompt } : {}) });
   }
   if (saved.length === 0) throw new ToolError('the API returned no image');
-  return { model, images: saved, ...(r.json.usage ? { usage: r.json.usage } : {}) };
+  return { model, ...(note ? { note } : {}), images: saved, ...(r.json.usage ? { usage: r.json.usage } : {}) };
 }
 
 const generateImage = (args) => draw('/images/generations', args, {});
@@ -219,7 +275,7 @@ export const TOOLS = [
   },
   {
     name: 'classify',
-    description: 'Classify or score files or texts with a decision model (e.g. Jev). One call per item. `questions` maps a name to {type:"choice", instructions, criteria:{label: description}} or {type:"score", instructions, criteria:["0: …","1: …",…]}. Text files only; describe images in text first.',
+    description: 'Classify, score or check files, texts and PNG/JPEG images with a decision model (e.g. Jev). One call per item; an image path is sent as the image itself. `questions` maps a name to {type:"noul", instructions} (probability the statement is true), {type:"choice", instructions, criteria:{label: description}}, {type:"score", instructions, criteria:["0: …","1: …",…]} or, Jev 1.14+, {type:"box", instructions} (where an object is in an image).',
     inputSchema: {
       type: 'object',
       required: ['items', 'questions'],

@@ -18,10 +18,11 @@ function stubApi() {
       const json = body ? JSON.parse(body) : null;
       seen.push({ method: req.method, url: req.url, auth: req.headers.authorization, body: json });
       const send = (status, obj) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
-      if (req.url === '/v1/models?model_type=decisions') return send(200, { data: [{ id: 'Typesafe/jev-1.14' }] });
+      if (req.url === '/v1/models?model_type=decisions') return send(200, { data: [{ id: 'Microsoft/decision-1' }, { id: 'Typesafe/jev-1.9' }, { id: 'Typesafe/jev-1.14' }] });
       if (req.url === '/v1/models?model_type=image') return send(200, { data: [{ id: 'gemini-3.1-flash-image', image_parameters: { sizes: ['1024x1024'] } }] });
       if (req.url === '/v1/decisions' && !json.model) return send(400, { error: { message: 'model is required' } });
       if (req.url === '/v1/images/generations' && !json.prompt) return send(403, { error: { message: 'images not enabled for this key' } });
+      if (req.url === '/v1/decisions' && Array.isArray(json.state)) return send(200, { answers: { mug: { type: 'noul', noul: 0.91 } } });
       if (req.url === '/v1/decisions') return send(200, { answers: { kind: { choice: json.state.content.includes('def ') ? 'code' : 'docs' } } });
       if (req.url.startsWith('/v1/images/')) return send(200, { created: 1, data: [{ b64_json: PNG.toString('base64') }] });
       send(404, {});
@@ -72,13 +73,15 @@ test('setup, classify and draw end to end against a stub API', async () => {
     assert.equal(init.result.serverInfo.name, 'model-tools');
     assert.deepEqual((await c.rpc('tools/list')).result.tools.map((t) => t.name), ['list_models', 'configure', 'classify', 'generate_image', 'edit_image']);
 
-    // No default yet: the tool says to run setup instead of guessing a model.
-    assert.match((await c.tool('classify', { items: [{ text: 'x' }], questions: { q: {} } })).text, /model-tools:setup/);
+    // No default yet: the first call still works, on the newest Jev, and says so.
+    const first = (await c.tool('classify', { items: [{ text: 'def g(): pass' }], questions: { kind: {} } })).json;
+    assert.equal(first.model, 'Typesafe/jev-1.14');
+    assert.match(first.note, /model-tools:setup/);
 
     const models = (await c.tool('list_models', {})).json;
     assert.deepEqual(models.permissions, { decisions: true, images: false });
     assert.equal(models.key_source, 'settings.json');
-    assert.deepEqual(models.classifiers.map((m) => m.id), ['Typesafe/jev-1.14']);
+    assert.deepEqual(models.classifiers.map((m) => m.id), ['Microsoft/decision-1', 'Typesafe/jev-1.9', 'Typesafe/jev-1.14']);
 
     assert.ok((await c.tool('configure', { classifier: 'nope' })).isError);
     await c.tool('configure', { classifier: 'Typesafe/jev-1.14', image_model: 'gemini-3.1-flash-image' });
@@ -92,10 +95,23 @@ test('setup, classify and draw end to end against a stub API', async () => {
     assert.equal(cls.results[0].answers.kind.choice, 'code');
     assert.equal(cls.results[1].answers.kind.choice, 'docs');
     assert.match(cls.results[2].error, /binary/);
-    const sent = seen.filter((s) => s.url === '/v1/decisions' && s.body.model);
+    const sent = seen.filter((s) => s.url === '/v1/decisions' && s.body.model).slice(1);
     assert.equal(sent.length, 2, 'a binary file is never sent');
     assert.deepEqual(Object.keys(sent[0].body).sort(), ['model', 'questions', 'state']);
     assert.ok(seen.every((s) => s.auth === 'Bearer key-test'));
+
+    // An image path goes into the state as the image itself; an oversized one that cannot be
+    // scaled is refused before any request.
+    const png = (w, h) => { const b = Buffer.alloc(33); PNG.copy(b); b.writeUInt32BE(w, 16); b.writeUInt32BE(h, 20); return b; };
+    await writeFile(join(project, 'cup.png'), png(800, 600));
+    await writeFile(join(project, 'huge.png'), png(4000, 3000));
+    const before = seen.length;
+    const pics = (await c.tool('classify', { items: [{ path: 'cup.png' }, { path: 'huge.png' }], questions: { mug: { type: 'noul', instructions: 'There is a mug.' } } })).json;
+    assert.equal(pics.results[0].answers.mug.noul, 0.91);
+    assert.match(pics.results[1].error, /resize|1568/);
+    const imgCalls = seen.slice(before).filter((s) => s.url === '/v1/decisions');
+    assert.equal(imgCalls.length, 1);
+    assert.deepEqual(imgCalls[0].body.state, ['item: cup.png', { type: 'image_url', image_url: { url: `data:image/png;base64,${png(800, 600).toString('base64')}` } }]);
 
     const img = (await c.tool('generate_image', { prompt: 'A red apple', aspect_ratio: '16:9' })).json;
     const gen = seen.find((s) => s.url === '/v1/images/generations' && s.body.prompt);

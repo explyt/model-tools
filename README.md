@@ -2,7 +2,7 @@
 
 Gives Claude Code two abilities through the API your Claude Code is already configured for:
 
-- **classify** — sort, tag, triage or score files and texts with a fast decision model
+- **classify** — sort, tag, triage, score or check files, texts and images (e.g. "is there a mug, how likely") with a fast decision model
   (`POST /v1/decisions`);
 - **images** — generate and edit images (`POST /v1/images/generations`, `/v1/images/edits`).
 
