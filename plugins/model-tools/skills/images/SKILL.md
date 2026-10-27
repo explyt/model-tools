@@ -1,6 +1,6 @@
 ---
 name: images
-description: Generate or edit raster images (illustrations, photos, icons, banners, mockups, textures, edits of existing pictures) through the model-tools `generate_image` and `edit_image` tools. Use when the user asks to draw, generate, render, create or edit an image or picture, or when a raster asset is needed. Not for diagrams that should be code (SVG, Mermaid) or UI that should be HTML/CSS.
+description: Generate or edit raster images — when the user asks for a picture, and on your own when a task needs one: README or landing hero, banner, app icon or avatar, placeholder product photo, illustration for docs or slides, texture, sprite, a variant or fix of an existing image. Not for diagrams (SVG, Mermaid) or UI (HTML/CSS).
 ---
 
 # Images

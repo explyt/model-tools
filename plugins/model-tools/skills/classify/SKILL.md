@@ -1,6 +1,6 @@
 ---
 name: classify
-description: Classify, label, triage, score or check files, texts and images with a fast decision model (Jev and others) through the model-tools `classify` tool, instead of judging each item yourself. Use when the user asks to sort, tag, categorize, triage, rate or filter files, logs, tickets or messages, to ask whether a picture shows something and how likely it is, or where an object is in a picture, and whenever a repeated yes/no, pick-one or score judgement over many items is needed.
+description: Probabilities and labels from a fast decision model (Jev) — use it instead of eyeballing whenever a yes/no, pick-one or 0–N judgement is asked or repeats over items. E.g. "how likely is there a cat in this photo", "are there more than 10 windows", sort or tag files, triage logs, tickets or reviews by topic or severity, flag spam or duplicates, rate docs or answers, check screenshots for an error, locate an object in an image.
 ---
 
 # Classify with a decision model

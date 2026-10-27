@@ -1,6 +1,6 @@
 {
   "name": "model-tools",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Classify files and texts with decision models and generate or edit images, through the API your Claude Code is configured for.",
   "author": {
     "name": "Explyt"

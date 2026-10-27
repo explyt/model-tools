@@ -8,7 +8,7 @@ import { existsSync } from 'node:fs';
 import { basename, extname, isAbsolute, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 
-const VERSION = '0.1.1';
+const VERSION = '0.1.2';
 const MAX_CONTENT_CHARS = 20000;
 const CLASSIFY_CONCURRENCY = 4;
 const DECISIONS_TIMEOUT_MS = 60_000;
@@ -263,7 +263,7 @@ const imageOptionProps = {
 export const TOOLS = [
   {
     name: 'list_models',
-    description: 'Classifiers (decision models) and image models this API key can use, with image parameters and prices, the key source and permissions, and the current defaults.',
+    description: 'Classifiers and image models this key can use (with image parameters and prices), the key source, permissions and current defaults.',
     inputSchema: { type: 'object', properties: {} },
     run: listModels,
   },
@@ -275,7 +275,7 @@ export const TOOLS = [
   },
   {
     name: 'classify',
-    description: 'Classify, score or check files, texts and PNG/JPEG images with a decision model (e.g. Jev). One call per item; an image path is sent as the image itself. `questions` maps a name to {type:"noul", instructions} (probability the statement is true), {type:"choice", instructions, criteria:{label: description}}, {type:"score", instructions, criteria:["0: …","1: …",…]} or, Jev 1.14+, {type:"box", instructions} (where an object is in an image).',
+    description: 'A decision model (e.g. Jev) answers questions about each item: a file, a text or a PNG/JPEG image (sent as the image). questions: {name: {type, instructions, criteria?}}; types: noul (probability true), choice (criteria {label: rule}), score (criteria ["0: …", …]), box (where in the image; Jev 1.14+). See the classify skill.',
     inputSchema: {
       type: 'object',
       required: ['items', 'questions'],
@@ -290,7 +290,7 @@ export const TOOLS = [
   },
   {
     name: 'generate_image',
-    description: 'Generate an image from a prompt and save it into the project. Returns the saved path; read it to look at the result.',
+    description: 'Generate an image from a prompt and save it into the project; returns the path — read it to check the result.',
     inputSchema: { type: 'object', required: ['prompt'], properties: { prompt: { type: 'string' }, ...imageOptionProps } },
     run: generateImage,
   },

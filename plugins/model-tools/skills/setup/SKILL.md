@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Set up the model-tools plugin — check which key it uses, which classifiers and image generators that key can use, and pick the defaults. Use on first use of the model-tools tools, when a tool says "run /model-tools:setup", or when the user wants to change the default classifier or image model.
+description: Set up model-tools: show the key in use and what it may do, pick the default classifier and image model. Use on first use, when a tool note mentions /model-tools:setup, or to change the defaults.
 ---
 
 # Set up model-tools
