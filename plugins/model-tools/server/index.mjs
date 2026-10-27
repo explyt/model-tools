@@ -8,7 +8,7 @@ import { existsSync } from 'node:fs';
 import { basename, extname, isAbsolute, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 
-const VERSION = '0.1.2';
+const VERSION = '0.1.3';
 const MAX_CONTENT_CHARS = 20000;
 const CLASSIFY_CONCURRENCY = 4;
 const DECISIONS_TIMEOUT_MS = 60_000;

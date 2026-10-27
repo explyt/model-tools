@@ -1,6 +1,6 @@
 ---
 name: classify
-description: Probabilities and labels from a fast decision model (Jev) — use it instead of eyeballing whenever a yes/no, pick-one or 0–N judgement is asked or repeats over items. E.g. "how likely is there a cat in this photo", "are there more than 10 windows", sort or tag files, triage logs, tickets or reviews by topic or severity, flag spam or duplicates, rate docs or answers, check screenshots for an error, locate an object in an image.
+description: Probabilities from a fast decision model (Jev) — use instead of judging by eye for any yes/no, pick-one or rubric call, above all one repeated over many items. E.g. triage logs, tickets, reviews or PRs by topic and urgency; rank which files or search hits matter for a task; check a diff against CLAUDE.md rules or for breaking changes; flag spam, duplicates, flaky tests; is X in this screenshot or photo, and where. Not for counting or math.
 ---
 
 # Classify with a decision model
@@ -8,6 +8,19 @@ description: Probabilities and labels from a fast decision model (Jev) — use i
 A decision model answers fixed questions about one item at a time, with calibrated
 probabilities. It is fast (about 2 s) and cheap, so prefer it over reading dozens of files yourself
 when the judgement is repetitive, and use it whenever the user asks for a probability.
+
+## Where it fits
+
+Good: routing and triage (team, topic, urgency), moderation and policy checks, relevance and
+reranking (which files, docs or search hits matter), verification (is the answer grounded in the
+source, does the diff follow a rule, is it a breaking change), scoring against a rubric, gates
+before a risky step (continue / retry / ask the user), spotting a stuck or looping run.
+
+Poor: counting, arithmetic and date math, multi-step reasoning, anything that needs generated
+text or an explanation — do those yourself. For a high-stakes single decision, read the item too.
+
+Thresholds: below about 0.6 confidence treat the answer as "unsure"; ask for 0.85+ before acting
+on something risky.
 
 ## Calling `classify`
 
@@ -38,8 +51,8 @@ when the judgement is repetitive, and use it whenever the user asks for a probab
 
 Each result carries `answers.<question>` with `noul`, `choice` or `score` (plus `probabilities`
 and `confidence` where the type has them).
-Treat a confidence below about 0.6 as "unsure" and look at that item yourself. An item that failed
-carries `error` and the rest still succeed.
+An unsure item is one to look at yourself. An item that failed carries `error` and the rest still
+succeed.
 
 Without a default the tool uses the newest Jev the key can use and says so in `note`; mention
 once that `/model-tools:setup` picks a different default.
